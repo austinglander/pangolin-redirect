@@ -545,7 +545,7 @@ export default function GeneralForm() {
                     ...(isRedirect && {
                         redirectUrl: data.redirectUrl,
                         preservePath: data.preservePath,
-                        redirectCode: data.redirectCode
+                        redirectCode: Number(data.redirectCode)
                     })
                 }
             )
@@ -574,7 +574,7 @@ export default function GeneralForm() {
                 ...(isRedirect && {
                     redirectUrl: data.redirectUrl,
                     preservePath: data.preservePath,
-                    redirectCode: data.redirectCode as number | undefined
+                    redirectCode: Number(data.redirectCode)
                 })
             });
 
