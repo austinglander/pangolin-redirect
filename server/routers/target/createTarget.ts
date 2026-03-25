@@ -117,6 +117,15 @@ export async function createTarget(
             );
         }
 
+        if (resource.type === "redirect") {
+            return next(
+                createHttpError(
+                    HttpCode.BAD_REQUEST,
+                    "Targets cannot be added to redirect resources"
+                )
+            );
+        }
+
         const siteId = targetData.siteId;
 
         const [site] = await db

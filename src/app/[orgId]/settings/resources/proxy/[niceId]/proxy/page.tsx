@@ -120,10 +120,13 @@ export default function ReverseProxyTargetsPage(props: {
     const router = useRouter();
     const { resource, updateResource } = useResourceContext();
 
-    if (resource.type === "redirect") {
-        router.replace(`/${params.orgId}/settings/resources/proxy/${params.niceId}/general`);
-        return null;
-    }
+    const isRedirect = resource.type === "redirect";
+
+    useEffect(() => {
+        if (isRedirect) {
+            router.replace(`/${params.orgId}/settings/resources/proxy/${params.niceId}/general`);
+        }
+    }, [isRedirect, params.orgId, params.niceId, router]);
 
     const { data: remoteTargets = [], isLoading: isLoadingTargets } = useQuery(
         resourceQueries.resourceTargets({
@@ -136,7 +139,7 @@ export default function ReverseProxyTargetsPage(props: {
         })
     );
 
-    if (isLoadingSites || isLoadingTargets) {
+    if (isRedirect || isLoadingSites || isLoadingTargets) {
         return null;
     }
 

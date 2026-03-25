@@ -114,6 +114,10 @@ export async function getTraefikConfig(
                     )
                 ),
                 inArray(sites.type, siteTypes),
+                or(
+                    isNull(resources.type),
+                    ne(resources.type, "redirect")
+                ),
                 allowRawResources
                     ? isNotNull(resources.http) // ignore the http check if allow_raw_resources is true
                     : eq(resources.http, true)
