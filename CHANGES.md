@@ -12,6 +12,8 @@ I recently switched from NPM to Pangolin for my reverse proxy needs and was disa
 
 Simply swap the image in your `docker-compose.yml` to `docker.io/austinglander/pangolin-redirect:1.16.2-redirect`. Again, use at your own risk. There are no guarantees that Claude didn't drop a backdoor in.
 
+If you're already running a version of Pangolin >1.16.2, you will need to do the database migration manually following the instructions in [Database migration](#database-migration) (untested at time of writing).
+
 ## AI Generated Summary of Changes
 
 Adds a new "redirect" resource type that returns an HTTP redirect (301/302) to a fixed admin-configured URL instead of proxying to a backend service.
@@ -21,6 +23,7 @@ Adds a new "redirect" resource type that returns an HTTP redirect (301/302) to a
 **Schema** (`server/db/sqlite/schema/schema.ts`, `server/db/pg/schema/schema.ts`)
 - Added columns to `resources`: `type`, `redirectUrl`, `preservePath`, `redirectCode`
 - Migration is auto-generated at build time by `npm run db:generate`
+- Versioned migration script at `server/setup/scriptsSqlite/1.16.3.ts`
 
 **API**
 - `server/routers/resource/createResource.ts` — New `createRedirectResource` handler and Zod schema
@@ -49,6 +52,30 @@ Adds a new "redirect" resource type that returns an HTTP redirect (301/302) to a
 - Auth (badger middleware) runs before the redirect, so SSO/pincode/password protection works
 - `preservePath=true` appends the original path and query string to the redirect URL
 - Existing resources are unaffected (default `type="proxy"`)
+
+### Database migration
+
+The built-in versioned migration (`1.16.3`) runs automatically when upgrading from Pangolin **1.16.2 or earlier**. If your database is already at a version **newer than 1.16.3** (e.g., you're switching to this fork from official 1.17.0+), the automatic migration will be skipped. In that case, run these SQL statements manually against your SQLite database before starting the container:
+
+```sql
+ALTER TABLE 'resources' ADD 'type' text DEFAULT 'proxy' NOT NULL;
+ALTER TABLE 'resources' ADD 'redirectUrl' text;
+ALTER TABLE 'resources' ADD 'preservePath' integer DEFAULT 0 NOT NULL;
+ALTER TABLE 'resources' ADD 'redirectCode' integer DEFAULT 302 NOT NULL;
+```
+
+To apply manually:
+
+```bash
+# Stop pangolin first
+docker compose stop pangolin
+
+# Run against your database (default path shown — adjust if yours differs)
+sqlite3 config/db/db.sqlite < migrate-redirect.sql
+
+# Start pangolin
+docker compose up -d
+```
 
 ### Rebasing onto new releases
 
