@@ -1126,9 +1126,6 @@ export default function Page() {
                                     <SettingsSectionBody>
                                         <DomainPicker
                                             orgId={orgId as string}
-                                            warnOnProvidedDomain={
-                                                remoteExitNodes.length >= 1
-                                            }
                                             onDomainChange={(res) => {
                                                 if (!res) return;
 
