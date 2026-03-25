@@ -73,6 +73,40 @@ const createRawResourceSchema = z
         }
     );
 
+const createRedirectResourceSchema = z
+    .strictObject({
+        name: z.string().min(1).max(255),
+        subdomain: z.string().nullable().optional(),
+        http: z.literal(true),
+        type: z.literal("redirect"),
+        protocol: z.enum(["tcp", "udp"]),
+        domainId: z.string(),
+        redirectUrl: z
+            .string()
+            .url()
+            .refine(
+                (url) =>
+                    url.startsWith("http://") || url.startsWith("https://"),
+                "Must be an HTTP or HTTPS URL"
+            ),
+        preservePath: z.boolean().optional(),
+        redirectCode: z
+            .number()
+            .refine((c) => c === 301 || c === 302)
+            .optional()
+    })
+    .refine(
+        (data) => {
+            if (data.subdomain) {
+                return subdomainSchema.safeParse(data.subdomain).success;
+            }
+            return true;
+        },
+        {
+            error: "Invalid subdomain"
+        }
+    );
+
 export type CreateResourceResponse = Resource;
 
 registry.registerPath({
@@ -85,7 +119,9 @@ registry.registerPath({
         body: {
             content: {
                 "application/json": {
-                    schema: createHttpResourceSchema.or(createRawResourceSchema)
+                    schema: createHttpResourceSchema
+                        .or(createRawResourceSchema)
+                        .or(createRedirectResourceSchema)
                 }
             }
         }
@@ -131,6 +167,13 @@ export async function createResource(
                     HttpCode.NOT_FOUND,
                     `Organization with ID ${orgId} not found`
                 )
+            );
+        }
+
+        if (req.body.type === "redirect") {
+            return await createRedirectResource(
+                { req, res, next },
+                { orgId }
             );
         }
 
@@ -396,6 +439,171 @@ async function createRawResource(
         success: true,
         error: false,
         message: "Non-http resource created successfully",
+        status: HttpCode.CREATED
+    });
+}
+
+async function createRedirectResource(
+    route: {
+        req: Request;
+        res: Response;
+        next: NextFunction;
+    },
+    meta: {
+        orgId: string;
+    }
+) {
+    const { req, res, next } = route;
+    const { orgId } = meta;
+
+    const parsedBody = createRedirectResourceSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+        return next(
+            createHttpError(
+                HttpCode.BAD_REQUEST,
+                fromError(parsedBody.error).toString()
+            )
+        );
+    }
+
+    const {
+        name,
+        domainId,
+        redirectUrl,
+        preservePath,
+        redirectCode
+    } = parsedBody.data;
+    const subdomain = parsedBody.data.subdomain;
+
+    // Validate domain and construct full domain
+    const domainResult = await validateAndConstructDomain(
+        domainId,
+        orgId,
+        subdomain
+    );
+
+    if (!domainResult.success) {
+        return next(createHttpError(HttpCode.BAD_REQUEST, domainResult.error));
+    }
+
+    const { fullDomain, subdomain: finalSubdomain } = domainResult;
+
+    logger.debug(`Full domain: ${fullDomain}`);
+
+    // make sure the full domain is unique
+    const existingResource = await db
+        .select()
+        .from(resources)
+        .where(eq(resources.fullDomain, fullDomain));
+
+    if (existingResource.length > 0) {
+        return next(
+            createHttpError(
+                HttpCode.CONFLICT,
+                "Resource with that domain already exists"
+            )
+        );
+    }
+
+    // Prevent creating resource with same domain as dashboard
+    const dashboardUrl = config.getRawConfig().app.dashboard_url;
+    if (dashboardUrl) {
+        const dashboardHost = new URL(dashboardUrl).hostname;
+        if (fullDomain === dashboardHost) {
+            return next(
+                createHttpError(
+                    HttpCode.CONFLICT,
+                    "Resource domain cannot be the same as the dashboard domain"
+                )
+            );
+        }
+    }
+
+    if (build != "oss") {
+        const existingLoginPages = await db
+            .select()
+            .from(loginPage)
+            .where(eq(loginPage.fullDomain, fullDomain));
+
+        if (existingLoginPages.length > 0) {
+            return next(
+                createHttpError(
+                    HttpCode.CONFLICT,
+                    "Login page with that domain already exists"
+                )
+            );
+        }
+    }
+
+    let resource: Resource | undefined;
+
+    const niceId = await getUniqueResourceName(orgId);
+
+    await db.transaction(async (trx) => {
+        const newResource = await trx
+            .insert(resources)
+            .values({
+                niceId,
+                fullDomain,
+                domainId,
+                orgId,
+                name,
+                subdomain: finalSubdomain,
+                http: true,
+                protocol: "tcp",
+                ssl: true,
+                type: "redirect",
+                redirectUrl,
+                preservePath: preservePath ?? false,
+                redirectCode: redirectCode ?? 302
+            })
+            .returning();
+
+        const adminRole = await db
+            .select()
+            .from(roles)
+            .where(and(eq(roles.isAdmin, true), eq(roles.orgId, orgId)))
+            .limit(1);
+
+        if (adminRole.length === 0) {
+            return next(
+                createHttpError(HttpCode.NOT_FOUND, `Admin role not found`)
+            );
+        }
+
+        await trx.insert(roleResources).values({
+            roleId: adminRole[0].roleId,
+            resourceId: newResource[0].resourceId
+        });
+
+        if (req.user && req.userOrgRoleId != adminRole[0].roleId) {
+            await trx.insert(userResources).values({
+                userId: req.user?.userId!,
+                resourceId: newResource[0].resourceId
+            });
+        }
+
+        resource = newResource[0];
+    });
+
+    if (!resource) {
+        return next(
+            createHttpError(
+                HttpCode.INTERNAL_SERVER_ERROR,
+                "Failed to create resource"
+            )
+        );
+    }
+
+    if (build != "oss") {
+        await createCertificate(domainId, fullDomain, db);
+    }
+
+    return response<CreateResourceResponse>(res, {
+        data: resource,
+        success: true,
+        error: false,
+        message: "Redirect resource created successfully",
         status: HttpCode.CREATED
     });
 }

@@ -473,6 +473,8 @@ export default function GeneralForm() {
         baseDomain: string;
     } | null>(null);
 
+    const isRedirect = resource.type === "redirect";
+
     const GeneralFormSchema = z
         .object({
             enabled: z.boolean(),
@@ -480,7 +482,10 @@ export default function GeneralForm() {
             name: z.string().min(1).max(255),
             niceId: z.string().min(1).max(255).optional(),
             domainId: z.string().optional(),
-            proxyPort: z.number().int().min(1).max(65535).optional()
+            proxyPort: z.number().int().min(1).max(65535).optional(),
+            redirectUrl: z.string().url().optional(),
+            preservePath: z.boolean().optional(),
+            redirectCode: z.coerce.number().optional()
         })
         .refine(
             (data) => {
@@ -509,7 +514,10 @@ export default function GeneralForm() {
             niceId: resource.niceId,
             subdomain: resource.subdomain ? resource.subdomain : undefined,
             domainId: resource.domainId || undefined,
-            proxyPort: resource.proxyPort || undefined
+            proxyPort: resource.proxyPort || undefined,
+            redirectUrl: resource.redirectUrl || undefined,
+            preservePath: resource.preservePath || false,
+            redirectCode: resource.redirectCode || 302
         },
         mode: "onChange"
     });
@@ -533,7 +541,12 @@ export default function GeneralForm() {
                         ? toASCII(data.subdomain)
                         : undefined,
                     domainId: data.domainId,
-                    proxyPort: data.proxyPort
+                    proxyPort: data.proxyPort,
+                    ...(isRedirect && {
+                        redirectUrl: data.redirectUrl,
+                        preservePath: data.preservePath,
+                        redirectCode: data.redirectCode
+                    })
                 }
             )
             .catch((e) => {
@@ -557,7 +570,12 @@ export default function GeneralForm() {
                 subdomain: data.subdomain,
                 fullDomain: updated.fullDomain,
                 proxyPort: data.proxyPort,
-                domainId: data.domainId
+                domainId: data.domainId,
+                ...(isRedirect && {
+                    redirectUrl: data.redirectUrl,
+                    preservePath: data.preservePath,
+                    redirectCode: data.redirectCode as number | undefined
+                })
             });
 
             toast({
@@ -735,6 +753,97 @@ export default function GeneralForm() {
                                             </div>
                                         </div>
                                     )}
+
+                                    {isRedirect && (
+                                        <>
+                                            <FormField
+                                                control={form.control}
+                                                name="redirectUrl"
+                                                render={({ field }) => (
+                                                    <FormItem>
+                                                        <FormLabel>
+                                                            {t("redirectUrl")}
+                                                        </FormLabel>
+                                                        <FormControl>
+                                                            <Input
+                                                                {...field}
+                                                                placeholder="https://example.com"
+                                                            />
+                                                        </FormControl>
+                                                        <FormDescription>
+                                                            {t("redirectUrlDescription")}
+                                                        </FormDescription>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
+
+                                            <FormField
+                                                control={form.control}
+                                                name="preservePath"
+                                                render={({ field }) => (
+                                                    <FormItem>
+                                                        <div className="flex items-center space-x-2">
+                                                            <FormControl>
+                                                                <SwitchInput
+                                                                    id="preserve-path"
+                                                                    checked={field.value}
+                                                                    label={t("preservePath")}
+                                                                    onCheckedChange={(val) =>
+                                                                        form.setValue(
+                                                                            "preservePath",
+                                                                            val
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </FormControl>
+                                                        </div>
+                                                        <FormDescription>
+                                                            {t("preservePathDescription")}
+                                                        </FormDescription>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
+
+                                            <FormField
+                                                control={form.control}
+                                                name="redirectCode"
+                                                render={({ field }) => (
+                                                    <FormItem className="space-y-3">
+                                                        <FormLabel>
+                                                            {t("redirectCode")}
+                                                        </FormLabel>
+                                                        <FormControl>
+                                                            <RadioGroup
+                                                                onValueChange={field.onChange}
+                                                                defaultValue={String(field.value)}
+                                                                className="flex flex-col space-y-1"
+                                                            >
+                                                                <FormItem className="flex items-center space-x-3 space-y-0">
+                                                                    <FormControl>
+                                                                        <RadioGroupItem value="302" />
+                                                                    </FormControl>
+                                                                    <FormLabel className="font-normal">
+                                                                        {t("redirectCodeTemporary")}
+                                                                    </FormLabel>
+                                                                </FormItem>
+                                                                <FormItem className="flex items-center space-x-3 space-y-0">
+                                                                    <FormControl>
+                                                                        <RadioGroupItem value="301" />
+                                                                    </FormControl>
+                                                                    <FormLabel className="font-normal">
+                                                                        {t("redirectCodePermanent")}
+                                                                    </FormLabel>
+                                                                </FormItem>
+                                                            </RadioGroup>
+                                                        </FormControl>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
+                                        </>
+                                    )}
                                 </form>
                             </Form>
                         </SettingsSectionForm>
@@ -752,7 +861,7 @@ export default function GeneralForm() {
                     </SettingsSectionFooter>
                 </SettingsSection>
 
-                {!env.flags.disableEnterpriseFeatures && (
+                {!env.flags.disableEnterpriseFeatures && !isRedirect && (
                     <MaintenanceSectionForm
                         resource={resource}
                         updateResource={updateResource}

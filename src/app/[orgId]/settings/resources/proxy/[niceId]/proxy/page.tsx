@@ -114,10 +114,16 @@ type LocalTarget = Omit<
 >;
 
 export default function ReverseProxyTargetsPage(props: {
-    params: Promise<{ resourceId: number; orgId: string }>;
+    params: Promise<{ resourceId: number; orgId: string; niceId: string }>;
 }) {
     const params = use(props.params);
+    const router = useRouter();
     const { resource, updateResource } = useResourceContext();
+
+    if (resource.type === "redirect") {
+        router.replace(`/${params.orgId}/settings/resources/proxy/${params.niceId}/general`);
+        return null;
+    }
 
     const { data: remoteTargets = [], isLoading: isLoadingTargets } = useQuery(
         resourceQueries.resourceTargets({

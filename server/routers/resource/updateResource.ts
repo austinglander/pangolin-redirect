@@ -103,6 +103,57 @@ const updateHttpResourceBodySchema = z
         }
     );
 
+const updateRedirectResourceBodySchema = z
+    .strictObject({
+        name: z.string().min(1).max(255).optional(),
+        niceId: z
+            .string()
+            .min(1)
+            .max(255)
+            .regex(
+                /^[a-zA-Z0-9-]+$/,
+                "niceId can only contain letters, numbers, and dashes"
+            )
+            .optional(),
+        subdomain: subdomainSchema.nullable().optional(),
+        domainId: z.string().optional(),
+        enabled: z.boolean().optional(),
+        sso: z.boolean().optional(),
+        blockAccess: z.boolean().optional(),
+        emailWhitelistEnabled: z.boolean().optional(),
+        applyRules: z.boolean().optional(),
+        skipToIdpId: z.int().positive().nullable().optional(),
+        redirectUrl: z
+            .string()
+            .url()
+            .refine(
+                (url) =>
+                    url.startsWith("http://") || url.startsWith("https://"),
+                "Must be an HTTP or HTTPS URL"
+            )
+            .optional(),
+        preservePath: z.boolean().optional(),
+        redirectCode: z
+            .number()
+            .refine((c) => c === 301 || c === 302)
+            .optional(),
+        postAuthPath: z.string().nullable().optional()
+    })
+    .refine((data) => Object.keys(data).length > 0, {
+        error: "At least one field must be provided for update"
+    })
+    .refine(
+        (data) => {
+            if (data.subdomain) {
+                return subdomainSchema.safeParse(data.subdomain).success;
+            }
+            return true;
+        },
+        {
+            error: "Invalid subdomain"
+        }
+    );
+
 export type UpdateResourceResponse = Resource;
 
 const updateRawResourceBodySchema = z
@@ -188,7 +239,20 @@ export async function updateResource(
             );
         }
 
-        if (resource.http) {
+        if (resource.type === "redirect") {
+            // HANDLE UPDATING REDIRECT RESOURCES
+            return await updateRedirectResource(
+                {
+                    req,
+                    res,
+                    next
+                },
+                {
+                    resource,
+                    org
+                }
+            );
+        } else if (resource.http) {
             // HANDLE UPDATING HTTP RESOURCES
             return await updateHttpResource(
                 {
@@ -456,6 +520,160 @@ async function updateRawResource(
         success: true,
         error: false,
         message: "Non-http Resource updated successfully",
+        status: HttpCode.OK
+    });
+}
+
+async function updateRedirectResource(
+    route: {
+        req: Request;
+        res: Response;
+        next: NextFunction;
+    },
+    meta: {
+        resource: Resource;
+        org: Org;
+    }
+) {
+    const { next, req, res } = route;
+    const { resource, org } = meta;
+
+    const parsedBody = updateRedirectResourceBodySchema.safeParse(req.body);
+    if (!parsedBody.success) {
+        return next(
+            createHttpError(
+                HttpCode.BAD_REQUEST,
+                fromError(parsedBody.error).toString()
+            )
+        );
+    }
+
+    const updateData = parsedBody.data;
+
+    if (updateData.niceId) {
+        const [existingResource] = await db
+            .select()
+            .from(resources)
+            .where(
+                and(
+                    eq(resources.niceId, updateData.niceId),
+                    eq(resources.orgId, resource.orgId),
+                    ne(resources.resourceId, resource.resourceId)
+                )
+            )
+            .limit(1);
+
+        if (existingResource) {
+            return next(
+                createHttpError(
+                    HttpCode.CONFLICT,
+                    `A resource with niceId "${updateData.niceId}" already exists`
+                )
+            );
+        }
+    }
+
+    if (updateData.domainId) {
+        const domainId = updateData.domainId;
+
+        const domainResult = await validateAndConstructDomain(
+            domainId,
+            resource.orgId,
+            updateData.subdomain
+        );
+
+        if (!domainResult.success) {
+            return next(
+                createHttpError(HttpCode.BAD_REQUEST, domainResult.error)
+            );
+        }
+
+        const { fullDomain, subdomain: finalSubdomain } = domainResult;
+
+        logger.debug(`Full domain: ${fullDomain}`);
+
+        if (fullDomain) {
+            const [existingDomain] = await db
+                .select()
+                .from(resources)
+                .where(eq(resources.fullDomain, fullDomain));
+
+            if (
+                existingDomain &&
+                existingDomain.resourceId !== resource.resourceId
+            ) {
+                return next(
+                    createHttpError(
+                        HttpCode.CONFLICT,
+                        "Resource with that domain already exists"
+                    )
+                );
+            }
+
+            const dashboardUrl = config.getRawConfig().app.dashboard_url;
+            if (dashboardUrl) {
+                const dashboardHost = new URL(dashboardUrl).hostname;
+                if (fullDomain === dashboardHost) {
+                    return next(
+                        createHttpError(
+                            HttpCode.CONFLICT,
+                            "Resource domain cannot be the same as the dashboard domain"
+                        )
+                    );
+                }
+            }
+
+            if (build != "oss") {
+                const existingLoginPages = await db
+                    .select()
+                    .from(loginPage)
+                    .where(eq(loginPage.fullDomain, fullDomain));
+
+                if (existingLoginPages.length > 0) {
+                    return next(
+                        createHttpError(
+                            HttpCode.CONFLICT,
+                            "Login page with that domain already exists"
+                        )
+                    );
+                }
+            }
+        }
+
+        if (fullDomain && fullDomain !== resource.fullDomain) {
+            await db
+                .update(resources)
+                .set({ fullDomain })
+                .where(eq(resources.resourceId, resource.resourceId));
+        }
+
+        updateData.subdomain = finalSubdomain;
+
+        if (build != "oss") {
+            await createCertificate(domainId, fullDomain, db);
+        }
+    }
+
+    const updatedResource = await db
+        .update(resources)
+        .set(updateData)
+        .where(eq(resources.resourceId, resource.resourceId))
+        .returning();
+
+    if (updatedResource.length === 0) {
+        return next(
+            createHttpError(
+                HttpCode.NOT_FOUND,
+                `Resource with ID ${resource.resourceId} not found`
+            )
+        );
+    }
+
+    return response(res, {
+        data: updatedResource[0],
+        success: true,
+        error: false,
+        message: "Redirect resource updated successfully",
         status: HttpCode.OK
     });
 }

@@ -72,6 +72,8 @@ export type ResourceRow = {
     targetHost?: string;
     targetPort?: number;
     targets?: TargetHealth[];
+    type?: string;
+    redirectUrl?: string | null;
 };
 
 function getOverallHealthStatus(
@@ -361,11 +363,13 @@ export default function ProxyResourcesTable({
                 const resourceRow = row.original;
                 return (
                     <span>
-                        {resourceRow.http
-                            ? resourceRow.ssl
-                                ? "HTTPS"
-                                : "HTTP"
-                            : resourceRow.protocol.toUpperCase()}
+                        {resourceRow.type === "redirect"
+                            ? "REDIRECT"
+                            : resourceRow.http
+                              ? resourceRow.ssl
+                                  ? "HTTPS"
+                                  : "HTTP"
+                              : resourceRow.protocol.toUpperCase()}
                     </span>
                 );
             }
@@ -403,6 +407,9 @@ export default function ProxyResourcesTable({
             ),
             cell: ({ row }) => {
                 const resourceRow = row.original;
+                if (resourceRow.type === "redirect") {
+                    return <span className="text-muted-foreground">N/A</span>;
+                }
                 return <TargetStatusCell targets={resourceRow.targets} />;
             },
             sortingFn: (rowA, rowB) => {
@@ -520,6 +527,8 @@ export default function ProxyResourcesTable({
             header: () => <span className="p-3"></span>,
             cell: ({ row }) => {
                 const resourceRow = row.original;
+                const defaultTab = resourceRow.type === "redirect" ? "general" : "";
+                const settingsHref = `/${resourceRow.orgId}/settings/resources/proxy/${resourceRow.nice}${defaultTab ? `/${defaultTab}` : ""}`;
                 return (
                     <div className="flex items-center gap-2 justify-end">
                         <DropdownMenu>
@@ -534,7 +543,7 @@ export default function ProxyResourcesTable({
                             <DropdownMenuContent align="end">
                                 <Link
                                     className="block w-full"
-                                    href={`/${resourceRow.orgId}/settings/resources/proxy/${resourceRow.nice}`}
+                                    href={settingsHref}
                                 >
                                     <DropdownMenuItem>
                                         {t("viewSettings")}
@@ -553,7 +562,7 @@ export default function ProxyResourcesTable({
                             </DropdownMenuContent>
                         </DropdownMenu>
                         <Link
-                            href={`/${resourceRow.orgId}/settings/resources/proxy/${resourceRow.nice}`}
+                            href={settingsHref}
                         >
                             <Button variant={"outline"}>
                                 {t("edit")}

@@ -127,6 +127,8 @@ export type ResourceWithTargets = {
     whitelist: boolean;
     http: boolean;
     protocol: string;
+    type: string;
+    redirectUrl: string | null;
     proxyPort: number | null;
     enabled: boolean;
     domainId: string | null;
@@ -175,6 +177,8 @@ function queryResourcesBase() {
             whitelist: resources.emailWhitelistEnabled,
             http: resources.http,
             protocol: resources.protocol,
+            type: resources.type,
+            redirectUrl: resources.redirectUrl,
             proxyPort: resources.proxyPort,
             enabled: resources.enabled,
             domainId: resources.domainId,
@@ -473,6 +477,8 @@ export async function listResources(
                     whitelist: row.whitelist,
                     http: row.http,
                     protocol: row.protocol,
+                    type: row.type,
+                    redirectUrl: row.redirectUrl,
                     proxyPort: row.proxyPort,
                     enabled: row.enabled,
                     domainId: row.domainId,

@@ -79,14 +79,17 @@ export default async function ResourceLayout(props: ResourceLayoutProps) {
         {
             title: t("general"),
             href: `/{orgId}/settings/resources/proxy/{niceId}/general`
-        },
-        {
-            title: t("proxy"),
-            href: `/{orgId}/settings/resources/proxy/{niceId}/proxy`
         }
     ];
 
-    if (resource.http) {
+    if (resource.type !== "redirect") {
+        navItems.push({
+            title: t("proxy"),
+            href: `/{orgId}/settings/resources/proxy/{niceId}/proxy`
+        });
+    }
+
+    if (resource.http || resource.type === "redirect") {
         navItems.push({
             title: t("authentication"),
             href: `/{orgId}/settings/resources/proxy/{niceId}/authentication`

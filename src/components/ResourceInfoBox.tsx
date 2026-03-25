@@ -1,7 +1,7 @@
 "use client";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ShieldCheck, ShieldOff, Eye, EyeOff } from "lucide-react";
+import { ShieldCheck, ShieldOff, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { useResourceContext } from "@app/hooks/useResourceContext";
 import CopyToClipboard from "@app/components/CopyToClipboard";
 import {
@@ -30,7 +30,11 @@ export default function ResourceInfoBox({}: ResourceInfoBoxType) {
             <AlertDescription>
                 {/* 4 cols because of the certs */}
                 <InfoSections
-                    cols={resource.http && env.flags.usePangolinDns ? 5 : 4}
+                    cols={
+                        resource.http && env.flags.usePangolinDns
+                            ? resource.type === "redirect" && resource.redirectUrl ? 6 : 5
+                            : resource.type === "redirect" && resource.redirectUrl ? 5 : 4
+                    }
                 >
                     <InfoSection>
                         <InfoSectionTitle>{t("identifier")}</InfoSectionTitle>
@@ -46,6 +50,21 @@ export default function ResourceInfoBox({}: ResourceInfoBoxType) {
                                     <CopyToClipboard text={fullUrl} isLink={true} />
                                 </InfoSectionContent>
                             </InfoSection>
+                            {resource.type === "redirect" && resource.redirectUrl && (
+                                <InfoSection>
+                                    <InfoSectionTitle>
+                                        {t("redirectDestination")}
+                                    </InfoSectionTitle>
+                                    <InfoSectionContent>
+                                        <div className="flex items-center space-x-1">
+                                            <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                            <span className="truncate max-w-[200px]">
+                                                {resource.redirectUrl}
+                                            </span>
+                                        </div>
+                                    </InfoSectionContent>
+                                </InfoSection>
+                            )}
                             <InfoSection>
                                 <InfoSectionTitle>
                                     {t("authentication")}

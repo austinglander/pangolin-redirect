@@ -119,6 +119,10 @@ export const resources = pgTable("resources", {
     sso: boolean("sso").notNull().default(true),
     http: boolean("http").notNull().default(true),
     protocol: varchar("protocol").notNull(),
+    type: text("type").notNull().default("proxy"), // "proxy" | "redirect"
+    redirectUrl: varchar("redirectUrl"),
+    preservePath: boolean("preservePath").notNull().default(false),
+    redirectCode: integer("redirectCode").notNull().default(302),
     proxyPort: integer("proxyPort"),
     emailWhitelistEnabled: boolean("emailWhitelistEnabled")
         .notNull()

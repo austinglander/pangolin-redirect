@@ -61,8 +61,10 @@ import { DockerManager, DockerState } from "@app/lib/docker";
 import { orgQueries } from "@app/lib/queries";
 import { finalizeSubdomainSanitize } from "@app/lib/subdomain-utils";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { build } from "@server/build";
 import { Resource } from "@server/db";
 import { isTargetValid } from "@server/lib/validators";
+import { ListRemoteExitNodesResponse } from "@server/routers/remoteExitNode/types";
 import { ListTargetsResponse } from "@server/routers/target";
 import { ArrayElement } from "@server/types/ArrayElement";
 import { useQuery } from "@tanstack/react-query";
@@ -106,6 +108,20 @@ const tcpUdpResourceFormSchema = z.object({
     protocol: z.string(),
     proxyPort: z.int().min(1).max(65535)
     // enableProxy: z.boolean().default(false)
+});
+
+const redirectResourceFormSchema = z.object({
+    domainId: z.string().nonempty(),
+    subdomain: z.string().optional(),
+    redirectUrl: z
+        .string()
+        .url()
+        .refine(
+            (url) => url.startsWith("http://") || url.startsWith("https://"),
+            "Must be an HTTP or HTTPS URL"
+        ),
+    preservePath: z.boolean().default(false),
+    redirectCode: z.number().default(302)
 });
 
 const addTargetSchema = z
@@ -180,7 +196,7 @@ const addTargetSchema = z
         }
     );
 
-type ResourceType = "http" | "raw";
+type ResourceType = "http" | "raw" | "redirect";
 
 interface ResourceTypeOption {
     id: ResourceType;
@@ -209,6 +225,14 @@ export default function Page() {
         orgQueries.sites({ orgId: orgId as string })
     );
 
+    const [remoteExitNodes, setRemoteExitNodes] = useState<
+        ListRemoteExitNodesResponse["remoteExitNodes"]
+    >([]);
+    const [loadingExitNodes, setLoadingExitNodes] = useState(
+        build === "saas"
+    );
+
+    const [selectedType, setSelectedType] = useState<ResourceType>("http");
     const [createLoading, setCreateLoading] = useState(false);
     const [showSnippets, setShowSnippets] = useState(false);
     const [niceId, setNiceId] = useState<string>("");
@@ -286,6 +310,11 @@ export default function Page() {
             title: t("resourceHTTP"),
             description: t("resourceHTTPDescription")
         },
+        {
+            id: "redirect" as ResourceType,
+            title: t("resourceRedirect"),
+            description: t("resourceRedirectDescription")
+        },
         ...(!env.flags.allowRawResources
             ? []
             : [
@@ -316,6 +345,15 @@ export default function Page() {
             protocol: "tcp",
             proxyPort: undefined
             // enableProxy: false
+        }
+    });
+
+    const redirectForm = useForm({
+        resolver: zodResolver(redirectResourceFormSchema),
+        defaultValues: {
+            redirectUrl: "",
+            preservePath: false,
+            redirectCode: 302
         }
     });
 
@@ -437,14 +475,33 @@ export default function Page() {
         const isHttp = baseData.http;
 
         try {
-            const payload = {
+            const payload: any = {
                 name: baseData.name,
                 http: baseData.http
             };
 
             let sanitizedSubdomain: string | undefined;
 
-            if (isHttp) {
+            if (selectedType === "redirect") {
+                const redirectData = redirectForm.getValues();
+
+                sanitizedSubdomain = redirectData.subdomain
+                    ? finalizeSubdomainSanitize(redirectData.subdomain)
+                    : undefined;
+
+                Object.assign(payload, {
+                    type: "redirect",
+                    http: true,
+                    subdomain: sanitizedSubdomain
+                        ? toASCII(sanitizedSubdomain)
+                        : undefined,
+                    domainId: redirectData.domainId,
+                    protocol: "tcp",
+                    redirectUrl: redirectData.redirectUrl,
+                    preservePath: redirectData.preservePath,
+                    redirectCode: redirectData.redirectCode
+                });
+            } else if (isHttp) {
                 const httpData = httpForm.getValues();
 
                 sanitizedSubdomain = httpData.subdomain
@@ -487,8 +544,8 @@ export default function Page() {
                 const niceId = res.data.data.niceId;
                 setNiceId(niceId);
 
-                // Create targets if any exist
-                if (targets.length > 0) {
+                // Create targets if any exist (skip for redirect resources)
+                if (targets.length > 0 && selectedType !== "redirect") {
                     try {
                         for (const target of targets) {
                             const data: any = {
@@ -539,7 +596,9 @@ export default function Page() {
                     }
                 }
 
-                if (isHttp) {
+                if (selectedType === "redirect") {
+                    router.push(`/${orgId}/settings/resources/proxy/${niceId}/general`);
+                } else if (isHttp) {
                     router.push(`/${orgId}/settings/resources/proxy/${niceId}`);
                 } else {
                     const tcpUdpData = tcpUdpForm.getValues();
@@ -991,26 +1050,29 @@ export default function Page() {
                                                 </span>
                                             </div>
 
-                                            <StrategySelect
-                                                options={resourceTypes}
-                                                defaultValue="http"
-                                                onChange={(value) => {
-                                                    baseForm.setValue(
-                                                        "http",
-                                                        value === "http"
-                                                    );
-                                                    // Update method default when switching resource type
-                                                    addTargetForm.setValue(
-                                                        "method",
-                                                        value === "http"
-                                                            ? "http"
-                                                            : null
-                                                    );
-                                                }}
-                                                cols={2}
-                                            />
-                                        </>
-                                    )}
+                                                <StrategySelect
+                                                    options={resourceTypes}
+                                                    defaultValue="http"
+                                                    onChange={(value) => {
+                                                        setSelectedType(
+                                                            value as ResourceType
+                                                        );
+                                                        baseForm.setValue(
+                                                            "http",
+                                                            value !== "raw"
+                                                        );
+                                                        // Update method default when switching resource type
+                                                        addTargetForm.setValue(
+                                                            "method",
+                                                            value === "http"
+                                                                ? "http"
+                                                                : null
+                                                        );
+                                                    }}
+                                                    cols={3}
+                                                />
+                                            </>
+                                        )}
 
                                     <SettingsSectionForm>
                                         <Form {...baseForm}>
@@ -1051,7 +1113,167 @@ export default function Page() {
                                 </SettingsSectionBody>
                             </SettingsSection>
 
-                            {baseForm.watch("http") ? (
+                            {selectedType === "redirect" ? (
+                                <SettingsSection>
+                                    <SettingsSectionHeader>
+                                        <SettingsSectionTitle>
+                                            {t("resourceRedirect")}
+                                        </SettingsSectionTitle>
+                                        <SettingsSectionDescription>
+                                            {t("resourceRedirectDescription")}
+                                        </SettingsSectionDescription>
+                                    </SettingsSectionHeader>
+                                    <SettingsSectionBody>
+                                        <DomainPicker
+                                            orgId={orgId as string}
+                                            warnOnProvidedDomain={
+                                                remoteExitNodes.length >= 1
+                                            }
+                                            onDomainChange={(res) => {
+                                                if (!res) return;
+
+                                                redirectForm.setValue(
+                                                    "subdomain",
+                                                    res.subdomain
+                                                );
+                                                redirectForm.setValue(
+                                                    "domainId",
+                                                    res.domainId
+                                                );
+                                            }}
+                                        />
+                                        <SettingsSectionForm>
+                                            <Form {...redirectForm}>
+                                                <form
+                                                    onKeyDown={(e) => {
+                                                        if (
+                                                            e.key === "Enter"
+                                                        ) {
+                                                            e.preventDefault();
+                                                        }
+                                                    }}
+                                                    className="space-y-4"
+                                                    id="redirect-settings-form"
+                                                >
+                                                    <FormField
+                                                        control={
+                                                            redirectForm.control
+                                                        }
+                                                        name="redirectUrl"
+                                                        render={({
+                                                            field
+                                                        }) => (
+                                                            <FormItem>
+                                                                <FormLabel>
+                                                                    {t(
+                                                                        "redirectUrl"
+                                                                    )}
+                                                                </FormLabel>
+                                                                <FormControl>
+                                                                    <Input
+                                                                        placeholder="https://example.com"
+                                                                        {...field}
+                                                                    />
+                                                                </FormControl>
+                                                                <FormDescription>
+                                                                    {t(
+                                                                        "redirectUrlDescription"
+                                                                    )}
+                                                                </FormDescription>
+                                                                <FormMessage />
+                                                            </FormItem>
+                                                        )}
+                                                    />
+                                                    <FormField
+                                                        control={
+                                                            redirectForm.control
+                                                        }
+                                                        name="preservePath"
+                                                        render={({
+                                                            field
+                                                        }) => (
+                                                            <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                                                                <div className="space-y-0.5">
+                                                                    <FormLabel>
+                                                                        {t(
+                                                                            "preservePath"
+                                                                        )}
+                                                                    </FormLabel>
+                                                                    <FormDescription>
+                                                                        {t(
+                                                                            "preservePathDescription"
+                                                                        )}
+                                                                    </FormDescription>
+                                                                </div>
+                                                                <FormControl>
+                                                                    <Switch
+                                                                        checked={
+                                                                            field.value
+                                                                        }
+                                                                        onCheckedChange={
+                                                                            field.onChange
+                                                                        }
+                                                                    />
+                                                                </FormControl>
+                                                            </FormItem>
+                                                        )}
+                                                    />
+                                                    <FormField
+                                                        control={
+                                                            redirectForm.control
+                                                        }
+                                                        name="redirectCode"
+                                                        render={({
+                                                            field
+                                                        }) => (
+                                                            <FormItem>
+                                                                <FormLabel>
+                                                                    {t(
+                                                                        "redirectCode"
+                                                                    )}
+                                                                </FormLabel>
+                                                                <Select
+                                                                    onValueChange={(
+                                                                        v
+                                                                    ) =>
+                                                                        field.onChange(
+                                                                            parseInt(
+                                                                                v
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                    value={String(
+                                                                        field.value
+                                                                    )}
+                                                                >
+                                                                    <FormControl>
+                                                                        <SelectTrigger>
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                    </FormControl>
+                                                                    <SelectContent>
+                                                                        <SelectItem value="302">
+                                                                            {t(
+                                                                                "redirectCodeTemporary"
+                                                                            )}
+                                                                        </SelectItem>
+                                                                        <SelectItem value="301">
+                                                                            {t(
+                                                                                "redirectCodePermanent"
+                                                                            )}
+                                                                        </SelectItem>
+                                                                    </SelectContent>
+                                                                </Select>
+                                                                <FormMessage />
+                                                            </FormItem>
+                                                        )}
+                                                    />
+                                                </form>
+                                            </Form>
+                                        </SettingsSectionForm>
+                                    </SettingsSectionBody>
+                                </SettingsSection>
+                            ) : selectedType === "http" ? (
                                 <SettingsSection>
                                     <SettingsSectionHeader>
                                         <SettingsSectionTitle>
@@ -1194,7 +1416,7 @@ export default function Page() {
                                 </SettingsSection>
                             )}
 
-                            <SettingsSection>
+                            {selectedType !== "redirect" && <SettingsSection>
                                 <SettingsSectionHeader>
                                     <SettingsSectionTitle>
                                         {t("targets")}
@@ -1366,7 +1588,7 @@ export default function Page() {
                                         </div>
                                     )}
                                 </SettingsSectionBody>
-                            </SettingsSection>
+                            </SettingsSection>}
 
                             <div className="flex justify-end space-x-2 mt-8">
                                 <Button
@@ -1383,14 +1605,19 @@ export default function Page() {
                                 <Button
                                     type="button"
                                     onClick={async () => {
-                                        const isHttp = baseForm.watch("http");
                                         const baseValid =
                                             await baseForm.trigger();
-                                        const settingsValid = isHttp
-                                            ? await httpForm.trigger()
-                                            : await tcpUdpForm.trigger();
-
-                                        console.log(httpForm.getValues());
+                                        let settingsValid;
+                                        if (selectedType === "redirect") {
+                                            settingsValid =
+                                                await redirectForm.trigger();
+                                        } else if (selectedType === "http") {
+                                            settingsValid =
+                                                await httpForm.trigger();
+                                        } else {
+                                            settingsValid =
+                                                await tcpUdpForm.trigger();
+                                        }
 
                                         if (baseValid && settingsValid) {
                                             onSubmit();

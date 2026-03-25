@@ -90,6 +90,8 @@ export default async function ProxyResourcesPage(
             enabled: resource.enabled,
             domainId: resource.domainId || undefined,
             ssl: resource.ssl,
+            type: resource.type,
+            redirectUrl: resource.redirectUrl,
             targets: resource.targets?.map((target) => ({
                 targetId: target.targetId,
                 ip: target.ip,

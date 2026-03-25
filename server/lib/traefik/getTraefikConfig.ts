@@ -209,8 +209,35 @@ export async function getTraefikConfig(
         });
     });
 
+    // Query redirect resources separately (they have no targets/sites)
+    const redirectResources = await db
+        .select({
+            resourceId: resources.resourceId,
+            resourceName: resources.name,
+            fullDomain: resources.fullDomain,
+            ssl: resources.ssl,
+            subdomain: resources.subdomain,
+            domainId: resources.domainId,
+            enabled: resources.enabled,
+            redirectUrl: resources.redirectUrl,
+            preservePath: resources.preservePath,
+            redirectCode: resources.redirectCode,
+            domainCertResolver: domains.certResolver,
+            preferWildcardCert: domains.preferWildcardCert
+        })
+        .from(resources)
+        .leftJoin(domains, eq(domains.domainId, resources.domainId))
+        .where(
+            and(
+                eq(resources.type, "redirect"),
+                eq(resources.enabled, true),
+                isNotNull(resources.redirectUrl),
+                isNotNull(resources.fullDomain)
+            )
+        );
+
     // make sure we have at least one resource
-    if (resourcesMap.size === 0) {
+    if (resourcesMap.size === 0 && redirectResources.length === 0) {
         return {};
     }
 
@@ -672,5 +699,145 @@ export async function getTraefikConfig(
             };
         }
     }
+
+    // Generate config for redirect resources
+    for (const redir of redirectResources) {
+        if (!redir.fullDomain || !redir.redirectUrl) {
+            continue;
+        }
+
+        const key = sanitize(`redirect-${redir.resourceId}`);
+        const routerName = `${key}-router`;
+        const redirectMiddlewareName = `${key}-redirect-middleware`;
+        const dummyServiceName = `${key}-noop-service`;
+        const fullDomain = redir.fullDomain;
+
+        // Initialize sections
+        if (!config_output.http.routers) {
+            config_output.http.routers = {};
+        }
+        if (!config_output.http.services) {
+            config_output.http.services = {};
+        }
+        if (!config_output.http.middlewares) {
+            config_output.http.middlewares = {};
+        }
+
+        // Build TLS config (same logic as HTTP resources)
+        const domainParts = fullDomain.split(".");
+        let wildCard;
+        if (domainParts.length <= 2) {
+            wildCard = `*.${domainParts.join(".")}`;
+        } else {
+            wildCard = `*.${domainParts.slice(1).join(".")}`;
+        }
+
+        if (!redir.subdomain) {
+            wildCard = redir.fullDomain;
+        }
+
+        const globalDefaultResolver =
+            config.getRawConfig().traefik.cert_resolver;
+        const globalDefaultPreferWildcard =
+            config.getRawConfig().traefik.prefer_wildcard_cert;
+
+        const domainCertResolver = redir.domainCertResolver;
+        const preferWildcardCert = redir.preferWildcardCert;
+
+        let resolverName: string | undefined;
+        let preferWildcard: boolean | undefined;
+        if (domainCertResolver) {
+            resolverName = domainCertResolver.trim();
+        } else {
+            resolverName = globalDefaultResolver;
+        }
+
+        if (
+            preferWildcardCert !== undefined &&
+            preferWildcardCert !== null
+        ) {
+            preferWildcard = preferWildcardCert;
+        } else {
+            preferWildcard = globalDefaultPreferWildcard;
+        }
+
+        const tls = {
+            certResolver: resolverName,
+            ...(preferWildcard
+                ? {
+                      domains: [
+                          {
+                              main: wildCard
+                          }
+                      ]
+                  }
+                : {})
+        };
+
+        // Build redirect regex middleware
+        let regex: string;
+        let replacement: string;
+        if (redir.preservePath) {
+            regex = "^https?://[^/]+(/.*)?$";
+            replacement = `${redir.redirectUrl}\${1}`;
+        } else {
+            regex = "^https?://.*";
+            replacement = redir.redirectUrl;
+        }
+
+        config_output.http.middlewares[redirectMiddlewareName] = {
+            redirectRegex: {
+                regex: regex,
+                replacement: replacement,
+                permanent: redir.redirectCode === 301
+            }
+        };
+
+        // Middlewares chain: badger first (for auth), then redirect
+        const additionalMiddlewares =
+            config.getRawConfig().traefik.additional_middlewares || [];
+
+        const routerMiddlewares = [
+            badgerMiddlewareName,
+            ...additionalMiddlewares,
+            redirectMiddlewareName
+        ];
+
+        const rule = `Host(\`${fullDomain}\`)`;
+
+        // Router
+        config_output.http.routers[routerName] = {
+            entryPoints: [
+                redir.ssl
+                    ? config.getRawConfig().traefik.https_entrypoint
+                    : config.getRawConfig().traefik.http_entrypoint
+            ],
+            middlewares: routerMiddlewares,
+            service: dummyServiceName,
+            rule: rule,
+            ...(redir.ssl ? { tls } : {})
+        };
+
+        // HTTP->HTTPS redirect router (if SSL)
+        if (redir.ssl) {
+            config_output.http.routers[routerName + "-redirect"] = {
+                entryPoints: [
+                    config.getRawConfig().traefik.http_entrypoint
+                ],
+                middlewares: [redirectHttpsMiddlewareName],
+                service: dummyServiceName,
+                rule: rule
+            };
+        }
+
+        // Dummy service - Traefik requires a service on every router.
+        // The redirectRegex middleware intercepts before reaching the service.
+        config_output.http.services[dummyServiceName] = {
+            loadBalancer: {
+                servers: [{ url: "http://0.0.0.0" }]
+            }
+        };
+    }
+
     return config_output;
 }

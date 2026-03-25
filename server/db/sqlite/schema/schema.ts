@@ -126,6 +126,12 @@ export const resources = sqliteTable("resources", {
     sso: integer("sso", { mode: "boolean" }).notNull().default(true),
     http: integer("http", { mode: "boolean" }).notNull().default(true),
     protocol: text("protocol").notNull(),
+    type: text("type").notNull().default("proxy"), // "proxy" | "redirect"
+    redirectUrl: text("redirectUrl"),
+    preservePath: integer("preservePath", { mode: "boolean" })
+        .notNull()
+        .default(false),
+    redirectCode: integer("redirectCode").notNull().default(302),
     proxyPort: integer("proxyPort"),
     emailWhitelistEnabled: integer("emailWhitelistEnabled", { mode: "boolean" })
         .notNull()
