@@ -121,7 +121,7 @@ const redirectResourceFormSchema = z.object({
             "Must be an HTTP or HTTPS URL"
         ),
     preservePath: z.boolean().default(false),
-    redirectCode: z.number().default(302)
+    redirectCode: z.coerce.number().default(302)
 });
 
 const addTargetSchema = z

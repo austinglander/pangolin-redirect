@@ -14,6 +14,10 @@ Simply swap the image in your `docker-compose.yml` to `docker.io/austinglander/p
 
 If you're already running a version of Pangolin >1.16.2, you will need to do the database migration manually following the instructions in [Database migration](#database-migration) (untested at time of writing).
 
+## Known Issues
+
+When creating a redirect resource without specifying a subdomain, the "Create Resource" button glitches and won't save. You can workaround this by clicking into the subdomain field, typing a character, deleting the character, then creating the resource.
+
 ## AI Generated Summary of Changes
 
 Adds a new "redirect" resource type that returns an HTTP redirect (301/302) to a fixed admin-configured URL instead of proxying to a backend service.
